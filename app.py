@@ -43,25 +43,34 @@ try:
     hf_token = os.getenv('HUGGINGFACE_TOKEN')
     if not hf_token:
         print("Warning: HUGGINGFACE_TOKEN not found in environment variables")
-        
-    # Load models with token authentication
+    
+    # Load models with token authentication and memory optimizations
     base_model = AutoModelForCausalLM.from_pretrained(
         "google/gemma-2b", 
-        token=hf_token
+        token=hf_token,
+        device_map="auto",  # Automatically offload to CPU when needed
+        torch_dtype=torch.float16,  # Use half precision to save memory
+        low_cpu_mem_usage=True,
+        offload_folder="offload_folder"
     )
+    
+    print("Base model loaded, applying PEFT adapter...")
     model = PeftModel.from_pretrained(
         base_model, 
         "naxwinn/A-U-R-A",
-        token=hf_token
+        token=hf_token,
+        device_map="auto"  # Also use auto device map for the PEFT model
     )
+    
     tokenizer = AutoTokenizer.from_pretrained(
         "google/gemma-2b",
         token=hf_token
     )
+    
+    # We'll still use device to know where the main computation will happen
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = model.to(device)
     MODEL_LOADED = True
-    print(f"Model loaded successfully on {device}")
+    print(f"Model loaded successfully with offloading, primary device: {device}")
 except Exception as e:
     print(f"Error loading AI model: {e}")
     model = None
@@ -128,16 +137,41 @@ def generate_response(query):
     
     try:
         print(f"Generating response for: {query}")
-        inputs = tokenizer(query, return_tensors="pt").to(device)
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=100,
-            num_return_sequences=1,
-            temperature=0.7,
-            top_k=50,
-            top_p=0.95,
-            repetition_penalty=1.2
-        )
+        # With device_map="auto", we don't need to explicitly move tensors to the device
+        inputs = tokenizer(query, return_tensors="pt")
+        
+        # Set up a context manager to handle CUDA out of memory errors gracefully
+        try:
+            with torch.inference_mode():
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=100,
+                    num_return_sequences=1,
+                    temperature=0.7,
+                    top_k=50,
+                    top_p=0.95,
+                    repetition_penalty=1.2,
+                    do_sample=True,
+                    use_cache=True
+                )
+        except torch.cuda.OutOfMemoryError:
+            print("CUDA out of memory, falling back to CPU...")
+            # If we run out of CUDA memory, try again with CPU
+            torch.cuda.empty_cache()
+            inputs = {k: v.cpu() for k, v in inputs.items()}
+            with torch.inference_mode():
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=100,
+                    num_return_sequences=1,
+                    temperature=0.7,
+                    top_k=50,
+                    top_p=0.95,
+                    repetition_penalty=1.2,
+                    do_sample=True,
+                    use_cache=True
+                )
+        
         response = tokenizer.decode(outputs[0], skip_special_tokens=True)
         
         # Gemma might repeat the input prompt in the output, so remove it if needed
@@ -286,7 +320,7 @@ def health_check():
 if __name__ == "__main__":
     # Run the Flask app instead of the voice interface
     print("Starting AURA API server...")
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=False)
     
     # If you want to use the voice interface, comment out the app.run line and uncomment the following:
     # aura()
