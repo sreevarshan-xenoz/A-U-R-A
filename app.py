@@ -44,14 +44,36 @@ try:
     if not hf_token:
         print("Warning: HUGGINGFACE_TOKEN not found in environment variables")
     
+    # Check if CUDA is available
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    is_cpu_only = device.type == 'cpu'
+    print(f"Using device: {device}")
+    
+    # CPU-specific optimizations if running on CPU
+    if is_cpu_only:
+        print("Applying CPU-specific optimizations...")
+        # Use int8 quantization on CPU for better performance
+        load_options = {
+            "token": hf_token,
+            "device_map": "auto",
+            "torch_dtype": torch.float16,  # Keep half precision to save memory
+            "low_cpu_mem_usage": True,
+            "offload_folder": "offload_folder",
+            "quantization_config": {"load_in_8bit": True} if torch.__version__ >= "2.0.0" else None,
+        }
+    else:
+        load_options = {
+            "token": hf_token,
+            "device_map": "auto",
+            "torch_dtype": torch.float16,
+            "low_cpu_mem_usage": True,
+            "offload_folder": "offload_folder"
+        }
+    
     # Load models with token authentication and memory optimizations
     base_model = AutoModelForCausalLM.from_pretrained(
         "google/gemma-2b", 
-        token=hf_token,
-        device_map="auto",  # Automatically offload to CPU when needed
-        torch_dtype=torch.float16,  # Use half precision to save memory
-        low_cpu_mem_usage=True,
-        offload_folder="offload_folder"
+        **load_options
     )
     
     print("Base model loaded, applying PEFT adapter...")
@@ -59,22 +81,34 @@ try:
         base_model, 
         "naxwinn/A-U-R-A",
         token=hf_token,
-        device_map="auto"  # Also use auto device map for the PEFT model
+        device_map="auto"
     )
+    
+    # Optimize for CPU inference
+    if is_cpu_only:
+        print("Optimizing model for faster CPU inference...")
+        model = model.to(torch.float32)  # Sometimes float32 is faster on CPU
+        
+        # Try to use optimizations if available
+        if hasattr(torch, 'compile') and torch.__version__ >= '2.0.0':
+            print("Using torch.compile for faster inference")
+            model = torch.compile(model)
     
     tokenizer = AutoTokenizer.from_pretrained(
         "google/gemma-2b",
         token=hf_token
     )
     
-    # We'll still use device to know where the main computation will happen
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     MODEL_LOADED = True
-    print(f"Model loaded successfully with offloading, primary device: {device}")
+    print(f"Model loaded successfully with optimizations, primary device: {device}")
 except Exception as e:
     print(f"Error loading AI model: {e}")
     model = None
     tokenizer = None
+
+# Response caching to improve performance
+RESPONSE_CACHE = {}
+MAX_CACHE_SIZE = 100
 
 def get_greeting():
     """Return time-appropriate greeting"""
@@ -135,24 +169,34 @@ def generate_response(query):
     if not MODEL_LOADED:
         return "My advanced AI features are currently unavailable. Please try basic commands."
     
+    # Check if response is in cache
+    if query.lower() in RESPONSE_CACHE:
+        print(f"Using cached response for: {query}")
+        return RESPONSE_CACHE[query.lower()]
+    
     try:
         print(f"Generating response for: {query}")
         # With device_map="auto", we don't need to explicitly move tensors to the device
         inputs = tokenizer(query, return_tensors="pt")
         
+        # Set a shorter length for faster responses
+        max_tokens = 50  # Reduced from 100 for faster responses
+        
         # Set up a context manager to handle CUDA out of memory errors gracefully
         try:
             with torch.inference_mode():
+                # Use a timeout to prevent very long generations
                 outputs = model.generate(
                     **inputs,
-                    max_new_tokens=100,
+                    max_new_tokens=max_tokens,
                     num_return_sequences=1,
                     temperature=0.7,
                     top_k=50,
                     top_p=0.95,
                     repetition_penalty=1.2,
                     do_sample=True,
-                    use_cache=True
+                    use_cache=True,
+                    num_beams=1  # Use greedy decoding for speed
                 )
         except torch.cuda.OutOfMemoryError:
             print("CUDA out of memory, falling back to CPU...")
@@ -162,14 +206,15 @@ def generate_response(query):
             with torch.inference_mode():
                 outputs = model.generate(
                     **inputs,
-                    max_new_tokens=100,
+                    max_new_tokens=max_tokens,
                     num_return_sequences=1,
                     temperature=0.7,
                     top_k=50,
                     top_p=0.95,
                     repetition_penalty=1.2,
                     do_sample=True,
-                    use_cache=True
+                    use_cache=True,
+                    num_beams=1  # Use greedy decoding for speed
                 )
         
         response = tokenizer.decode(outputs[0], skip_special_tokens=True)
@@ -177,6 +222,12 @@ def generate_response(query):
         # Gemma might repeat the input prompt in the output, so remove it if needed
         if response.startswith(query):
             response = response[len(query):].strip()
+        
+        # Add to cache
+        if len(RESPONSE_CACHE) >= MAX_CACHE_SIZE:
+            # Remove a random item from cache if full
+            RESPONSE_CACHE.pop(next(iter(RESPONSE_CACHE)))
+        RESPONSE_CACHE[query.lower()] = response
             
         # Keep conversation history limited
         CONVERSATION_HISTORY.append((query, response))

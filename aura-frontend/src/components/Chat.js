@@ -9,6 +9,9 @@ function Chat() {
   const [isLoading, setIsLoading] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const messagesEndRef = useRef(null);
+  const [isTyping, setIsTyping] = useState(false);
+  const [currentResponse, setCurrentResponse] = useState('');
+  const typingSpeed = 15; // ms per character
 
   // Check if the backend is available
   useEffect(() => {
@@ -32,6 +35,27 @@ function Chat() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [responses]);
 
+  // Simulated typing effect
+  const simulateTyping = (fullResponse) => {
+    setIsTyping(true);
+    setCurrentResponse('');
+    
+    let i = 0;
+    const timer = setInterval(() => {
+      if (i < fullResponse.length) {
+        setCurrentResponse(prev => prev + fullResponse.charAt(i));
+        i++;
+      } else {
+        clearInterval(timer);
+        setIsTyping(false);
+        // Once done typing, add the response to the messages
+        setResponses(prev => [...prev, { text: fullResponse, isBot: true }]);
+      }
+    }, typingSpeed);
+    
+    return () => clearInterval(timer);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!message.trim()) return;
@@ -39,17 +63,19 @@ function Chat() {
     // Add user message to responses
     setResponses(prev => [...prev, { text: message, isBot: false }]);
     setIsLoading(true);
+    
+    // Clear any existing typing
+    setIsTyping(false);
+    setCurrentResponse('');
 
     try {
       if (!isConnected) {
         // Fallback if backend is not connected
         setTimeout(() => {
-          setResponses(prev => [...prev, { 
-            text: "Sorry, I'm currently disconnected from my brain. Please check the backend server.", 
-            isBot: true 
-          }]);
+          const response = "Sorry, I'm currently disconnected from my brain. Please check the backend server.";
+          simulateTyping(response);
           setIsLoading(false);
-        }, 1000);
+        }, 500);
       } else {
         // Connect to the Flask backend
         const response = await fetch('http://localhost:5000/api/chat', {
@@ -61,19 +87,16 @@ function Chat() {
         });
 
         const data = await response.json();
+        const responseText = data.response || "I'm having trouble understanding that right now.";
         
-        setResponses(prev => [...prev, { 
-          text: data.response || "I'm having trouble understanding that right now.", 
-          isBot: true 
-        }]);
+        // Instead of immediately adding to responses, simulate typing
+        simulateTyping(responseText);
+        setIsLoading(false);
       }
     } catch (error) {
       console.error('Error communicating with backend:', error);
-      setResponses(prev => [...prev, { 
-        text: "Sorry, I encountered an error processing your request.", 
-        isBot: true 
-      }]);
-    } finally {
+      const errorMsg = "Sorry, I encountered an error processing your request.";
+      simulateTyping(errorMsg);
       setIsLoading(false);
     }
 
@@ -96,6 +119,12 @@ function Chat() {
           </div>
         ))}
         {isLoading && <div className="loading">AURA is thinking...</div>}
+        {isTyping && (
+          <div className="message bot typing">
+            {currentResponse}
+            <span className="cursor"></span>
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
       <form onSubmit={handleSubmit} className="chat-input">
