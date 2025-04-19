@@ -9,7 +9,14 @@ import os
 import requests
 from dotenv import load_dotenv
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import PeftModel
 import torch
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+
+# Initialize Flask app
+app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
 # Load environment variables
 load_dotenv()
@@ -31,11 +38,30 @@ NEWS_API_KEY = os.getenv('NEWS_API_KEY')
 # Hugging Face Model Setup
 MODEL_LOADED = False
 try:
-    model = AutoModelForCausalLM.from_pretrained("naxwinn/qlora-jarvis-output")
-    tokenizer = AutoTokenizer.from_pretrained("naxwinn/qlora-jarvis-output")
+    print("Loading Gemma 2B model with PEFT...")
+    # Get token from environment variable
+    hf_token = os.getenv('HUGGINGFACE_TOKEN')
+    if not hf_token:
+        print("Warning: HUGGINGFACE_TOKEN not found in environment variables")
+        
+    # Load models with token authentication
+    base_model = AutoModelForCausalLM.from_pretrained(
+        "google/gemma-2b", 
+        token=hf_token
+    )
+    model = PeftModel.from_pretrained(
+        base_model, 
+        "naxwinn/A-U-R-A",
+        token=hf_token
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        "google/gemma-2b",
+        token=hf_token
+    )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     MODEL_LOADED = True
+    print(f"Model loaded successfully on {device}")
 except Exception as e:
     print(f"Error loading AI model: {e}")
     model = None
@@ -101,10 +127,11 @@ def generate_response(query):
         return "My advanced AI features are currently unavailable. Please try basic commands."
     
     try:
-        inputs = tokenizer.encode(query, return_tensors="pt").to(device)
+        print(f"Generating response for: {query}")
+        inputs = tokenizer(query, return_tensors="pt").to(device)
         outputs = model.generate(
-            inputs,
-            max_length=100,
+            **inputs,
+            max_new_tokens=100,
             num_return_sequences=1,
             temperature=0.7,
             top_k=50,
@@ -112,7 +139,15 @@ def generate_response(query):
             repetition_penalty=1.2
         )
         response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        
+        # Gemma might repeat the input prompt in the output, so remove it if needed
+        if response.startswith(query):
+            response = response[len(query):].strip()
+            
+        # Keep conversation history limited
         CONVERSATION_HISTORY.append((query, response))
+        if len(CONVERSATION_HISTORY) > 5:
+            CONVERSATION_HISTORY.pop(0)
         return response
     except Exception as e:
         print(f"Generation error: {e}")
@@ -126,40 +161,55 @@ def handle_command(command):
             song = command.replace('play', '').strip()
             talk(f'Playing {song}')
             pywhatkit.playonyt(song)
+            return f'Playing {song}'
 
         elif 'time' in command:
             time = datetime.datetime.now().strftime('%I:%M %p')
             talk(f'Current time is {time}')
+            return f'Current time is {time}'
 
         elif 'who is' in command:
             person = command.replace('who is', '').strip()
             try:
                 info = wikipedia.summary(person, sentences=2)
                 talk(info)
+                return info
             except wikipedia.exceptions.DisambiguationError:
-                talk("Multiple results found. Please be more specific.")
+                response = "Multiple results found. Please be more specific."
+                talk(response)
+                return response
             except wikipedia.exceptions.PageError:
-                talk(f"Sorry, I couldn't find information about {person}")
+                response = f"Sorry, I couldn't find information about {person}"
+                talk(response)
+                return response
 
         elif 'joke' in command:
-            talk(pyjokes.get_joke())
+            joke = pyjokes.get_joke()
+            talk(joke)
+            return joke
 
         elif 'weather' in command:
             city = command.replace('weather', '').strip() or 'new york'
             weather_report = get_weather(city)
             talk(weather_report)
+            return weather_report
 
         elif 'news' in command:
             news = get_news()
             talk(news)
+            return news
 
         elif 'volume up' in command:
             os.system("nircmd.exe changesysvolume 2000")
-            talk('Increasing volume')
+            response = 'Increasing volume'
+            talk(response)
+            return response
 
         elif 'volume down' in command:
             os.system("nircmd.exe changesysvolume -2000")
-            talk('Decreasing volume')
+            response = 'Decreasing volume'
+            talk(response)
+            return response
 
         elif 'open' in command:
             sites = {
@@ -175,23 +225,29 @@ def handle_command(command):
                 if site in command:
                     talk(f'Opening {site}')
                     webbrowser.open(url)
-                    return
-            talk("Website not in my database")
+                    return f'Opening {site}'
+            response = "Website not in my database"
+            talk(response)
+            return response
 
         elif 'exit' in command or 'goodbye' in command:
-            talk("Goodbye!")
-            exit()
+            response = "Goodbye!"
+            talk(response)
+            return response
 
         else:
             response = generate_response(command)
             talk(response)
+            return response
 
     except Exception as e:
         print(f"Command error: {e}")
-        talk("Sorry, I encountered an error processing that request.")
+        error_msg = "Sorry, I encountered an error processing that request."
+        talk(error_msg)
+        return error_msg
 
 def aura():
-    # Initial startup greeting
+    # Initial startup greeting only
     initial_greeting = get_greeting()
     talk(f"{initial_greeting}! I'm Aura. How can I assist you today?")
     
@@ -200,16 +256,37 @@ def aura():
         if command and detect_wake_word(command):
             actual_command = command.split(' ', 1)[1] if ' ' in command else ""
             
-            # Time-based greeting for wake word activation
-            current_greeting = get_greeting()
-            talk(f"{current_greeting}! How can I assist you?")
-            
             if actual_command:
                 handle_command(actual_command)
             else:
+                talk("How can I assist you?")
                 follow_up_command = take_command()
                 if follow_up_command:
                     handle_command(follow_up_command)
 
+# Flask API endpoints
+@app.route('/api/chat', methods=['POST'])
+def chat():
+    data = request.json
+    message = data.get('message', '')
+    
+    if not message:
+        return jsonify({'error': 'No message provided'}), 400
+    
+    response = handle_command(message)
+    return jsonify({'response': response})
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    return jsonify({
+        'status': 'ok',
+        'model_loaded': MODEL_LOADED
+    })
+
 if __name__ == "__main__":
-    aura()
+    # Run the Flask app instead of the voice interface
+    print("Starting AURA API server...")
+    app.run(host='0.0.0.0', port=5000, debug=True)
+    
+    # If you want to use the voice interface, comment out the app.run line and uncomment the following:
+    # aura()
