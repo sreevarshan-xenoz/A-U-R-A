@@ -13,8 +13,8 @@ function Chat() {
   const [currentResponse, setCurrentResponse] = useState('');
   const typingSpeed = 15; // ms per character
 
-  // Your Hugging Face Space URL
-  const HF_SPACE_URL = "https://naxwinn-aura.hf.space";
+  // New Hugging Face Space URL
+  const HF_SPACE_URL = "https://hadadrjt-ai.hf.space";
   
   // Check if the Hugging Face Space is available
   useEffect(() => {
@@ -33,37 +33,8 @@ function Chat() {
         });
         
         const isAvailable = response.ok;
-        
-        if (isAvailable) {
-          // Try to parse the response for more details
-          try {
-            const data = await response.json();
-            console.log('Heartbeat response:', data);
-          } catch (e) {
-            console.log('Heartbeat OK but not JSON format');
-          }
-        }
-        
         setIsConnected(isAvailable);
         console.log('Hugging Face Space status:', isAvailable ? 'connected' : 'disconnected');
-        
-        // If not connected, let's also try the alternative endpoint format
-        if (!isAvailable) {
-          try {
-            console.log("Trying alternative endpoint...");
-            const altResponse = await fetch(`${HF_SPACE_URL}/api/chat`, {
-              method: 'OPTIONS',
-              headers: { 'Content-Type': 'application/json' }
-            });
-            
-            if (altResponse.ok || altResponse.status === 204) {
-              console.log("Alternative endpoint available, setting connected");
-              setIsConnected(true);
-            }
-          } catch (e) {
-            console.error("Alternative endpoint also failed:", e);
-          }
-        }
       } catch (error) {
         console.error('Error connecting to Hugging Face Space:', error);
         setIsConnected(false);
@@ -124,104 +95,103 @@ function Chat() {
           setIsLoading(false);
         }, 500);
       } else {
-        // First try the standard Gradio format
-        console.log("Trying standard Gradio format...");
-        let response;
+        // Use the respond_async endpoint from the new Space
+        console.log("Sending message to Hugging Face Space:", message);
         
         try {
-          response = await fetch(`${HF_SPACE_URL}/run/predict`, {
+          const response = await fetch(`${HF_SPACE_URL}/run/respond_async`, {
             method: 'POST',
-            headers: { 
+            headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json'
             },
             body: JSON.stringify({
-              data: [message, []], // [message, history] format
+              data: [
+                {
+                  text: message,
+                  files: [] // No files being sent
+                }
+              ],
               fn_index: 0
             }),
             mode: 'cors'
           });
-        } catch (e) {
-          console.error("Standard format failed:", e);
-          // Try the API endpoint with /chat
-          console.log("Trying /api/chat endpoint...");
-          response = await fetch(`${HF_SPACE_URL}/api/chat`, {
-            method: 'POST',
-            headers: { 
-              'Content-Type': 'application/json',
-              'Accept': 'application/json' 
-            },
-            body: JSON.stringify({ message: message }),
-            mode: 'cors'
-          });
-        }
-        
-        if (response?.ok) {
-          const result = await response.json();
-          console.log("API response:", result);
           
-          let responseText = "I'm having trouble understanding that right now.";
-          
-          // Try different result formats
-          if (result && result.data && Array.isArray(result.data) && result.data.length > 0) {
-            // Standard Gradio format
-            responseText = result.data[0];
-          } else if (typeof result === 'string') {
-            // Direct string response
-            responseText = result;
-          } else if (result && result.data && typeof result.data === 'string') {
-            // Object with data string
-            responseText = result.data;
-          } else if (result && result.response) {
-            // Object with response field
-            responseText = result.response;
+          if (response.ok) {
+            const result = await response.json();
+            console.log("API response:", result);
+            
+            let responseText = "I'm having trouble understanding that right now.";
+            
+            // Handle the response format from this specific API
+            if (result && result.data && Array.isArray(result.data) && result.data.length > 0) {
+              // The response is in the first element of data array
+              const chatbotData = result.data[0];
+              
+              // Extract the last bot message from the chatbot data
+              if (Array.isArray(chatbotData) && chatbotData.length > 0) {
+                const lastMessage = chatbotData[chatbotData.length - 1];
+                if (lastMessage && lastMessage.length > 1) {
+                  responseText = lastMessage[1]; // Bot messages are at index 1
+                }
+              }
+            }
+            
+            console.log("Final response text:", responseText);
+            simulateTyping(responseText);
           } else {
-            console.warn("Unexpected response format:", result);
-          }
-          
-          console.log("Final response text:", responseText);
-          simulateTyping(responseText);
-        } else {
-          // Log more detailed error information
-          console.error("API returned error:", response?.status, response?.statusText);
-          const errorText = await response?.text().catch(e => "Could not read error response");
-          console.error("Error details:", errorText);
-          
-          // One final attempt with a different format
-          console.log("Trying last fallback format...");
-          try {
-            const lastAttempt = await fetch(`${HF_SPACE_URL}/run/chat`, {
+            // Try fallback to /api endpoint if respond_async fails
+            console.log("respond_async failed, trying /api endpoint...");
+            const apiResponse = await fetch(`${HF_SPACE_URL}/run/api`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+              },
               body: JSON.stringify({
-                data: [message],
-                session_hash: new Date().getTime().toString()
-              })
+                data: [
+                  {
+                    text: message,
+                    files: []
+                  }
+                ],
+                fn_index: 0
+              }),
+              mode: 'cors'
             });
             
-            if (lastAttempt.ok) {
-              const lastResult = await lastAttempt.json();
-              console.log("Last attempt response:", lastResult);
-              let finalText = "I'm having trouble understanding that right now.";
+            if (apiResponse.ok) {
+              const apiResult = await apiResponse.json();
+              console.log("API endpoint response:", apiResult);
               
-              if (lastResult && typeof lastResult.data === 'string') {
-                finalText = lastResult.data;
-              } else if (lastResult && Array.isArray(lastResult.data)) {
-                finalText = lastResult.data[0] || finalText;
+              let apiResponseText = "I'm having trouble understanding that right now.";
+              
+              // Similar extraction logic for the API endpoint
+              if (apiResult && apiResult.data && Array.isArray(apiResult.data) && apiResult.data.length > 0) {
+                const chatbotData = apiResult.data[0];
+                
+                if (Array.isArray(chatbotData) && chatbotData.length > 0) {
+                  const lastMessage = chatbotData[chatbotData.length - 1];
+                  if (lastMessage && lastMessage.length > 1) {
+                    apiResponseText = lastMessage[1];
+                  }
+                }
               }
               
-              simulateTyping(finalText);
-              return; // Exit early if this worked
+              console.log("API endpoint response text:", apiResponseText);
+              simulateTyping(apiResponseText);
+            } else {
+              throw new Error(`API returned error: ${apiResponse.status}`);
             }
-          } catch (finalError) {
-            console.error("Final attempt also failed:", finalError);
           }
-          
-          throw new Error(`API returned error: ${response?.status || "unknown"}`);
+        } catch (innerError) {
+          console.error("API call failed:", innerError);
+          const errorMsg = "Sorry, I encountered an error processing your request.";
+          simulateTyping(errorMsg);
         }
       }
-    } catch (innerError) {
-      console.error("API call failed:", innerError);
+    } catch (error) {
+      console.error('Error communicating with Hugging Face Space:', error);
       const errorMsg = "Sorry, I encountered an error processing your request.";
       simulateTyping(errorMsg);
     } finally {
