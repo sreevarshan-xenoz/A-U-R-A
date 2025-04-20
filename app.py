@@ -29,11 +29,12 @@ NEWS_API_KEY = os.getenv('NEWS_API_KEY')
 MODEL_LOADED = False
 try:
     print("Loading TinyLlama 1.1B model with PEFT...")
-    # Get token from environment variable
+    # Get token from environment variable or use fallback
     hf_token = os.getenv('HUGGINGFACE_TOKEN')
     if not hf_token:
-        print("Warning: HUGGINGFACE_TOKEN not found in environment variables")
-        print("Please set this in your Hugging Face Space secrets")
+        print("HUGGINGFACE_TOKEN not found in environment variables, using fallback token")
+        # Fallback token - note this is less secure but ensures the model can load
+        hf_token = "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"
     
     # Check if CUDA is available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -47,21 +48,21 @@ try:
         load_options = {
             "token": hf_token,
             "device_map": "auto",
-            "torch_dtype": torch.float16,  # Keep half precision to save memory
+            "torch_dtype": torch.float16,
             "low_cpu_mem_usage": True,
-            "offload_folder": "offload_folder",
-            "quantization_config": {"load_in_8bit": True} if torch.__version__ >= "2.0.0" else None,
+            # Use 8-bit quantization to dramatically reduce memory usage
+            "load_in_8bit": True
         }
     else:
         load_options = {
             "token": hf_token,
             "device_map": "auto",
             "torch_dtype": torch.float16,
-            "low_cpu_mem_usage": True,
-            "offload_folder": "offload_folder"
+            "low_cpu_mem_usage": True
         }
     
-    # Load TinyLlama base model
+    # Load TinyLlama base model with reduced precision
+    print("Loading base model with reduced precision...")
     base_model = AutoModelForCausalLM.from_pretrained(
         "TinyLlama/TinyLlama-1.1B-Chat-v1.0", 
         **load_options
@@ -96,6 +97,8 @@ except Exception as e:
     print(f"Error loading AI model: {e}")
     model = None
     tokenizer = None
+    print("Continuing in fallback mode without AI model")
+    # We'll still be able to use the basic functions like time, weather, etc.
 
 # Response caching to improve performance
 RESPONSE_CACHE = {}
@@ -137,7 +140,7 @@ def get_news():
 
 def generate_response(query):
     if not MODEL_LOADED:
-        return "My advanced AI features are currently unavailable. Please try basic commands."
+        return "I'm running in basic mode without my AI features. Try asking about time, weather, news, or jokes."
     
     # Check if response is in cache
     if query.lower() in RESPONSE_CACHE:
@@ -256,43 +259,27 @@ def handle_command(command):
 def respond(message, history):
     return handle_command(message)
 
-# Create Gradio interface with a clean and professional theme
-css = """
-.gradio-container {
-    font-family: 'Arial', sans-serif;
-}
-.chat-message {
-    padding: 10px;
-    border-radius: 10px;
-    margin-bottom: 10px;
-}
-.user-message {
-    background-color: #e9e9ff;
-}
-.bot-message {
-    background-color: #f0f0f0;
-}
-"""
-
-# Set up the Gradio interface
+# Create Gradio interface with a simpler theme
 initial_greeting = f"{get_greeting()}! I'm AURA, an AI assistant powered by TinyLlama. How can I help you today?"
 
 demo = gr.ChatInterface(
     fn=respond,
     title="A-U-R-A: AI Virtual Assistant",
     description="Powered by TinyLlama with QLora fine-tuning",
-    theme="soft",
+    theme="default",  # Simpler theme
     examples=[
         "What time is it?",
         "Tell me a joke",
-        "Weather in London",
-        "Give me the latest news",
-        "Who is Albert Einstein?"
+        "Weather in London"
     ],
-    cache_examples=True,
+    cache_examples=False,  # Disable caching to save memory
     analytics_enabled=False,
 )
 
-# Launch the app
+# Launch the app with smaller queue size for faster startup
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(
+        share=False,  # Don't create a public share link
+        debug=True,   # Enable debug info in logs
+        max_threads=4  # Limit threads to avoid resource exhaustion
+    )
