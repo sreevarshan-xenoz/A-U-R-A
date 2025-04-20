@@ -13,8 +13,8 @@ function Chat() {
   const [currentResponse, setCurrentResponse] = useState('');
   const typingSpeed = 15; // ms per character
 
-  // Your Hugging Face Space URL - REPLACE THIS with your actual space URL
-  const HF_SPACE_URL = "https://naxwinn-a-u-r-a.hf.space";
+  // Your Hugging Face Space URL - Updated to correct URL
+  const HF_SPACE_URL = "https://naxwinn-aura.hf.space";
   
   // Check if the Hugging Face Space is available
   useEffect(() => {
@@ -85,23 +85,20 @@ function Chat() {
           setIsLoading(false);
         }, 500);
       } else {
-        // Connect to the Hugging Face Gradio API
-        const response = await fetch(`${HF_SPACE_URL}/api/predict`, {
+        // Connect to the Hugging Face API using the correct endpoint
+        const response = await fetch(`${HF_SPACE_URL}/api/chat`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ 
-            data: [
-              message, // The message
-              [] // Empty history array - Gradio ChatInterface format
-            ] 
+            message: message // Updated format for the /chat endpoint
           }),
         });
 
         const data = await response.json();
-        // Gradio returns data.data which contains the response in this format
-        const responseText = data.data || "I'm having trouble understanding that right now.";
+        // The response is directly in data, not data.data
+        const responseText = data || "I'm having trouble understanding that right now.";
         
         // Instead of immediately adding to responses, simulate typing
         simulateTyping(responseText);
