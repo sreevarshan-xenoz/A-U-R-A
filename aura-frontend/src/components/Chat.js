@@ -12,40 +12,61 @@ function Chat() {
   const [isTyping, setIsTyping] = useState(false);
   const [currentResponse, setCurrentResponse] = useState('');
   const typingSpeed = 15; // ms per character
+  const [chatId, setChatId] = useState(null);
 
-  // New Hugging Face Space URL
-  const HF_SPACE_URL = "https://hadadrjt-ai.hf.space";
+  // Backend API URL (our proxy server)
+  const API_URL = "http://localhost:3001/api";
   
-  // Check if the Hugging Face Space is available
+  // Initialize the connection and create a new chat session
   useEffect(() => {
-    const checkConnection = async () => {
+    const initializeClient = async () => {
       try {
-        console.log("Checking connection to Hugging Face Space...");
-        // Try to fetch the standard Gradio heartbeat endpoint
-        const response = await fetch(`${HF_SPACE_URL}/run/heartbeat`, {
-          method: 'GET',
-          headers: { 
+        console.log("Checking backend server connection...");
+        
+        // First, check if the backend server is running
+        try {
+          const testResponse = await fetch(`${API_URL}/test`);
+          if (testResponse.ok) {
+            const testResult = await testResponse.json();
+            console.log('Backend server status:', testResult);
+          } else {
+            throw new Error(`Server test failed with status: ${testResponse.status}`);
+          }
+        } catch (testError) {
+          console.error('Backend server test failed:', testError);
+          console.warn('Make sure to run the backend server with "npm run server" in another terminal');
+          setIsConnected(false);
+          return;
+        }
+        
+        // Then try to create a chat session
+        const response = await fetch(`${API_URL}/create_chat`, {
+          method: 'POST',
+          headers: {
             'Content-Type': 'application/json',
-            'Accept': 'application/json'
           },
-          mode: 'cors',
-          cache: 'no-cache'
+          body: JSON.stringify({ data: [] })
         });
         
-        const isAvailable = response.ok;
-        setIsConnected(isAvailable);
-        console.log('Hugging Face Space status:', isAvailable ? 'connected' : 'disconnected');
+        if (response.ok) {
+          const result = await response.json();
+          setIsConnected(true);
+          console.log('Connected to backend server successfully');
+          
+          if (result.data) {
+            setChatId(result.data);
+            console.log('Created new chat with ID:', result.data);
+          }
+        } else {
+          throw new Error(`Connection failed with status: ${response.status}`);
+        }
       } catch (error) {
-        console.error('Error connecting to Hugging Face Space:', error);
+        console.error('Error connecting to backend server:', error);
         setIsConnected(false);
       }
     };
     
-    checkConnection();
-    // Check connection status periodically
-    const intervalId = setInterval(checkConnection, 30000); // Check every 30 seconds
-    
-    return () => clearInterval(intervalId);
+    initializeClient();
   }, []);
 
   // Auto-scroll to the bottom of messages
@@ -87,117 +108,110 @@ function Chat() {
     setCurrentResponse('');
 
     try {
-      if (!isConnected) {
-        // Fallback if Space is not connected
+      if (!isConnected || !chatId) {
+        // Fallback if not connected
         setTimeout(() => {
-          const response = "Sorry, I'm currently disconnected from my brain. Please check if the Hugging Face Space is running.";
+          const response = "Sorry, I'm currently disconnected from my brain. Please wait a moment and try again.";
           simulateTyping(response);
           setIsLoading(false);
         }, 500);
       } else {
-        // Use the standard predict endpoint with correct format for this Space
-        console.log("Sending message to Hugging Face Space:", message);
+        console.log("Sending message to backend server:", message);
         
         try {
-          // First set the model to JARVIS
-          await fetch(`${HF_SPACE_URL}/run/change_model`, {
+          // Use the submit endpoint to send the message
+          const response = await fetch(`${API_URL}/submit`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              data: ["JARVIS: 2.1.2"]
-            })
-          });
-          
-          // Now send the actual message
-          const response = await fetch(`${HF_SPACE_URL}/run/api`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              data: [{
-                "text": message,
-                "files": []
-              }]
+              data: [
+                chatId,        // chat_id
+                message,       // message
+                null,          // stream (using null for non-streaming)
+                null,          // temperature
+                null,          // max_tokens
+                null,          // top_p 
+                null           // top_k
+              ]
             })
           });
           
           if (response.ok) {
             const result = await response.json();
             console.log("API response:", result);
-            
-            let responseText = "I'm having trouble understanding that right now.";
-            
-            // Extract response from the chat history array
-            if (result.data && Array.isArray(result.data) && result.data.length > 0) {
-              const chatHistory = result.data[0];
-              console.log("Chat history:", chatHistory);
-              
-              if (Array.isArray(chatHistory) && chatHistory.length > 0) {
-                // Get the last message (which should be the bot's response)
-                const lastMessage = chatHistory[chatHistory.length - 1];
-                console.log("Last message:", lastMessage);
-                
-                if (Array.isArray(lastMessage) && lastMessage.length > 1) {
-                  responseText = lastMessage[1]; // Bot response is at index 1
-                }
-              }
+            if (result.data && result.data.response) {
+              const responseText = result.data.response;
+              console.log("Response text:", responseText);
+              simulateTyping(responseText);
+            } else {
+              throw new Error('No response data received');
             }
-            
-            console.log("Final response text:", responseText);
-            simulateTyping(responseText);
           } else {
-            console.error("API error:", response.status, response.statusText);
-            
-            // Try the alternative endpoint
-            console.log("Trying respond_async endpoint...");
-            const altResponse = await fetch(`${HF_SPACE_URL}/run/respond_async`, {
+            throw new Error(`API call failed with status: ${response.status}`);
+          }
+        } catch (innerError) {
+          console.error("API call failed:", innerError);
+          
+          // Try to recreate the chat if it might have expired
+          try {
+            console.log("Attempting to create a new chat session...");
+            const newChatResponse = await fetch(`${API_URL}/create_chat`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
               },
-              body: JSON.stringify({
-                data: [{
-                  "text": message,
-                  "files": []
-                }]
-              })
+              body: JSON.stringify({ data: [] })
             });
             
-            if (altResponse.ok) {
-              const altResult = await altResponse.json();
-              console.log("Alternative endpoint response:", altResult);
-              
-              let altResponseText = "I'm having trouble understanding that right now.";
-              
-              if (altResult.data && Array.isArray(altResult.data) && altResult.data.length > 0) {
-                const chatHistory = altResult.data[0];
+            if (newChatResponse.ok) {
+              const newChatResult = await newChatResponse.json();
+              if (newChatResult.data) {
+                setChatId(newChatResult.data);
+                console.log('Created new chat with ID:', newChatResult.data);
                 
-                if (Array.isArray(chatHistory) && chatHistory.length > 0) {
-                  const lastMessage = chatHistory[chatHistory.length - 1];
-                  
-                  if (Array.isArray(lastMessage) && lastMessage.length > 1) {
-                    altResponseText = lastMessage[1];
+                // Try sending the message again with the new chat ID
+                const retryResponse = await fetch(`${API_URL}/submit`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    data: [
+                      newChatResult.data, // new chat_id
+                      message,            // message
+                      null,               // stream
+                      null,               // temperature
+                      null,               // max_tokens
+                      null,               // top_p
+                      null                // top_k
+                    ]
+                  })
+                });
+                
+                if (retryResponse.ok) {
+                  const retryResult = await retryResponse.json();
+                  if (retryResult.data && retryResult.data.response) {
+                    const responseText = retryResult.data.response;
+                    simulateTyping(responseText);
+                  } else {
+                    throw new Error('No response data received on retry');
                   }
+                } else {
+                  throw new Error(`Retry API call failed with status: ${retryResponse.status}`);
                 }
               }
-              
-              console.log("Alternative response text:", altResponseText);
-              simulateTyping(altResponseText);
-            } else {
-              throw new Error(`All API endpoints failed`);
             }
+          } catch (retryError) {
+            console.error("Retry failed:", retryError);
+            const errorMsg = "Sorry, I encountered an error processing your request.";
+            simulateTyping(errorMsg);
           }
-        } catch (innerError) {
-          console.error("API call failed:", innerError);
-          const errorMsg = "Sorry, I encountered an error processing your request.";
-          simulateTyping(errorMsg);
         }
       }
     } catch (error) {
-      console.error('Error communicating with Hugging Face Space:', error);
+      console.error('Error communicating with backend server:', error);
       const errorMsg = "Sorry, I encountered an error processing your request.";
       simulateTyping(errorMsg);
     } finally {
@@ -205,6 +219,83 @@ function Chat() {
     }
 
     setMessage('');
+  };
+
+  const handleRegenerateResponse = async () => {
+    if (!isConnected || !chatId || isLoading) return;
+    
+    setIsLoading(true);
+    try {
+      console.log("Regenerating last response...");
+      const response = await fetch(`${API_URL}/regenerate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          data: [
+            chatId,  // chat_id
+            null,    // stream
+            null,    // temperature
+            null,    // max_tokens
+            null,    // top_p
+            null     // top_k
+          ]
+        })
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        if (result.data && result.data.response) {
+          // Remove the last bot message if it exists
+          const lastBotIndex = [...responses].reverse().findIndex(r => r.isBot);
+          if (lastBotIndex !== -1) {
+            const newResponses = [...responses];
+            newResponses.splice(responses.length - 1 - lastBotIndex, 1);
+            setResponses(newResponses);
+          }
+          
+          const responseText = result.data.response;
+          simulateTyping(responseText);
+        }
+      } else {
+        throw new Error(`Regenerate API call failed with status: ${response.status}`);
+      }
+    } catch (error) {
+      console.error('Error regenerating response:', error);
+      const errorMsg = "Sorry, I couldn't regenerate a response.";
+      simulateTyping(errorMsg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleClearChat = async () => {
+    if (!isConnected) return;
+    
+    try {
+      console.log("Clearing chat history...");
+      const response = await fetch(`${API_URL}/create_chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ data: [] })
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        if (result.data) {
+          setChatId(result.data);
+          console.log('Created new chat with ID:', result.data);
+          setResponses([
+            { text: "Hello! I'm A-U-R-A. How can I assist you today?", isBot: true }
+          ]);
+        }
+      }
+    } catch (error) {
+      console.error('Error clearing chat history:', error);
+    }
   };
 
   return (
@@ -215,6 +306,22 @@ function Chat() {
           <span className="status-text">{isConnected ? 'Connected' : 'Disconnected'}</span>
         </div>
         <h3>A-U-R-A Chat</h3>
+        <div className="chat-actions">
+          <button 
+            onClick={handleRegenerateResponse} 
+            disabled={isLoading || !isConnected}
+            className="action-button"
+          >
+            Regenerate
+          </button>
+          <button 
+            onClick={handleClearChat} 
+            disabled={isLoading || !isConnected}
+            className="action-button"
+          >
+            Clear Chat
+          </button>
+        </div>
       </div>
       <div className="chat-messages">
         {responses.map((response, index) => (
