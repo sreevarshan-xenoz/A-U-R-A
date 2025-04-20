@@ -224,6 +224,8 @@ function Chat() {
       console.error("API call failed:", innerError);
       const errorMsg = "Sorry, I encountered an error processing your request.";
       simulateTyping(errorMsg);
+    } finally {
+      setIsLoading(false);
     }
 
     setMessage('');
