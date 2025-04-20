@@ -29,12 +29,12 @@ NEWS_API_KEY = os.getenv('NEWS_API_KEY')
 MODEL_LOADED = False
 try:
     print("Loading TinyLlama 1.1B model with PEFT...")
-    # Get token from environment variable or use fallback
+    # Get token from environment variable
     hf_token = os.getenv('HUGGINGFACE_TOKEN')
     if not hf_token:
-        print("HUGGINGFACE_TOKEN not found in environment variables, using fallback token")
-        # Fallback token - note this is less secure but ensures the model can load
-        hf_token = "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"
+        print("HUGGINGFACE_TOKEN not found in environment variables")
+        print("Please set this in your Hugging Face Space secrets or .env file")
+        # Continue without token, model loading will fail but basic functions will work
     
     # Check if CUDA is available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
