@@ -1,31 +1,21 @@
 import speech_recognition as sr
-import pyttsx3
-import pywhatkit
 import datetime
 import wikipedia
 import pyjokes
-import webbrowser
 import os
 import requests
 from dotenv import load_dotenv
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 import torch
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-
-# Initialize Flask app
-app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+import gradio as gr
 
 # Load environment variables
 load_dotenv()
 
-# Initialize speech recognition and text-to-speech engine
+# Initialize speech recognition - note that this won't be used in the web interface
+# but we keep the import for potential future use
 listener = sr.Recognizer()
-engine = pyttsx3.init()
-voices = engine.getProperty('voices')
-engine.setProperty('voice', voices[0].id)
 
 # Configuration
 WAKE_WORDS = ['aura', 'ora', 'aurora']
@@ -38,11 +28,12 @@ NEWS_API_KEY = os.getenv('NEWS_API_KEY')
 # Hugging Face Model Setup
 MODEL_LOADED = False
 try:
-    print("Loading Gemma 2B model with PEFT...")
+    print("Loading TinyLlama 1.1B model with PEFT...")
     # Get token from environment variable
     hf_token = os.getenv('HUGGINGFACE_TOKEN')
     if not hf_token:
         print("Warning: HUGGINGFACE_TOKEN not found in environment variables")
+        print("Please set this in your Hugging Face Space secrets")
     
     # Check if CUDA is available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -70,16 +61,16 @@ try:
             "offload_folder": "offload_folder"
         }
     
-    # Load models with token authentication and memory optimizations
+    # Load TinyLlama base model
     base_model = AutoModelForCausalLM.from_pretrained(
-        "google/gemma-2b", 
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0", 
         **load_options
     )
     
     print("Base model loaded, applying PEFT adapter...")
     model = PeftModel.from_pretrained(
         base_model, 
-        "naxwinn/A-U-R-A",
+        "naxwinn/tinyllama-1.1b-jarvis-qlora",
         token=hf_token,
         device_map="auto"
     )
@@ -95,7 +86,7 @@ try:
             model = torch.compile(model)
     
     tokenizer = AutoTokenizer.from_pretrained(
-        "google/gemma-2b",
+        "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
         token=hf_token
     )
     
@@ -121,27 +112,6 @@ def get_greeting():
         return "Good evening"
     else:
         return "Good night"
-
-def talk(text):
-    engine.say(text)
-    engine.runAndWait()
-
-def take_command():
-    command = ""
-    try:
-        with sr.Microphone() as source:
-            listener.adjust_for_ambient_noise(source, duration=1)
-            print('Listening...')
-            voice = listener.listen(source, timeout=5)
-            command = listener.recognize_google(voice).lower()
-    except (sr.UnknownValueError, sr.WaitTimeoutError):
-        pass
-    except Exception as e:
-        print(f"Microphone error: {e}")
-    return command
-
-def detect_wake_word(command):
-    return any(command.startswith(word) for word in WAKE_WORDS)
 
 def get_weather(city):
     try:
@@ -219,7 +189,7 @@ def generate_response(query):
         
         response = tokenizer.decode(outputs[0], skip_special_tokens=True)
         
-        # Gemma might repeat the input prompt in the output, so remove it if needed
+        # TinyLlama might repeat the input prompt in the output, so remove it if needed
         if response.startswith(query):
             response = response[len(query):].strip()
         
@@ -244,134 +214,85 @@ def handle_command(command):
 
         if 'play' in command:
             song = command.replace('play', '').strip()
-            talk(f'Playing {song}')
-            pywhatkit.playonyt(song)
-            return f'Playing {song}'
+            # In a web environment, we can't play songs directly
+            return f"I would play '{song}' for you, but I can't play music in this web interface."
 
         elif 'time' in command:
             time = datetime.datetime.now().strftime('%I:%M %p')
-            talk(f'Current time is {time}')
             return f'Current time is {time}'
 
         elif 'who is' in command:
             person = command.replace('who is', '').strip()
             try:
                 info = wikipedia.summary(person, sentences=2)
-                talk(info)
                 return info
             except wikipedia.exceptions.DisambiguationError:
-                response = "Multiple results found. Please be more specific."
-                talk(response)
-                return response
+                return "Multiple results found. Please be more specific."
             except wikipedia.exceptions.PageError:
-                response = f"Sorry, I couldn't find information about {person}"
-                talk(response)
-                return response
+                return f"Sorry, I couldn't find information about {person}"
 
         elif 'joke' in command:
             joke = pyjokes.get_joke()
-            talk(joke)
             return joke
 
         elif 'weather' in command:
             city = command.replace('weather', '').strip() or 'new york'
-            weather_report = get_weather(city)
-            talk(weather_report)
-            return weather_report
+            return get_weather(city)
 
         elif 'news' in command:
-            news = get_news()
-            talk(news)
-            return news
-
-        elif 'volume up' in command:
-            os.system("nircmd.exe changesysvolume 2000")
-            response = 'Increasing volume'
-            talk(response)
-            return response
-
-        elif 'volume down' in command:
-            os.system("nircmd.exe changesysvolume -2000")
-            response = 'Decreasing volume'
-            talk(response)
-            return response
-
-        elif 'open' in command:
-            sites = {
-                'youtube': 'https://youtube.com',
-                'google': 'https://google.com',
-                'gmail': 'https://mail.google.com',
-                'chatgpt': 'https://chat.openai.com',
-                'cults': 'https://cults3d.com',
-                'kaggle': 'https://kaggle.com',
-                'hianime': 'https://hianime.tv'
-            }
-            for site, url in sites.items():
-                if site in command:
-                    talk(f'Opening {site}')
-                    webbrowser.open(url)
-                    return f'Opening {site}'
-            response = "Website not in my database"
-            talk(response)
-            return response
+            return get_news()
 
         elif 'exit' in command or 'goodbye' in command:
-            response = "Goodbye!"
-            talk(response)
-            return response
+            return "Goodbye!"
 
         else:
-            response = generate_response(command)
-            talk(response)
-            return response
+            return generate_response(command)
 
     except Exception as e:
         print(f"Command error: {e}")
-        error_msg = "Sorry, I encountered an error processing that request."
-        talk(error_msg)
-        return error_msg
+        return "Sorry, I encountered an error processing that request."
 
-def aura():
-    # Initial startup greeting only
-    initial_greeting = get_greeting()
-    talk(f"{initial_greeting}! I'm Aura. How can I assist you today?")
-    
-    while True:
-        command = take_command()
-        if command and detect_wake_word(command):
-            actual_command = command.split(' ', 1)[1] if ' ' in command else ""
-            
-            if actual_command:
-                handle_command(actual_command)
-            else:
-                talk("How can I assist you?")
-                follow_up_command = take_command()
-                if follow_up_command:
-                    handle_command(follow_up_command)
+# Gradio interface
+def respond(message, history):
+    return handle_command(message)
 
-# Flask API endpoints
-@app.route('/api/chat', methods=['POST'])
-def chat():
-    data = request.json
-    message = data.get('message', '')
-    
-    if not message:
-        return jsonify({'error': 'No message provided'}), 400
-    
-    response = handle_command(message)
-    return jsonify({'response': response})
+# Create Gradio interface with a clean and professional theme
+css = """
+.gradio-container {
+    font-family: 'Arial', sans-serif;
+}
+.chat-message {
+    padding: 10px;
+    border-radius: 10px;
+    margin-bottom: 10px;
+}
+.user-message {
+    background-color: #e9e9ff;
+}
+.bot-message {
+    background-color: #f0f0f0;
+}
+"""
 
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    return jsonify({
-        'status': 'ok',
-        'model_loaded': MODEL_LOADED
-    })
+# Set up the Gradio interface
+initial_greeting = f"{get_greeting()}! I'm AURA, an AI assistant powered by TinyLlama. How can I help you today?"
 
+demo = gr.ChatInterface(
+    fn=respond,
+    title="A-U-R-A: AI Virtual Assistant",
+    description="Powered by TinyLlama with QLora fine-tuning",
+    theme="soft",
+    examples=[
+        "What time is it?",
+        "Tell me a joke",
+        "Weather in London",
+        "Give me the latest news",
+        "Who is Albert Einstein?"
+    ],
+    cache_examples=True,
+    analytics_enabled=False,
+)
+
+# Launch the app
 if __name__ == "__main__":
-    # Run the Flask app instead of the voice interface
-    print("Starting AURA API server...")
-    app.run(host='0.0.0.0', port=5000, debug=False)
-    
-    # If you want to use the voice interface, comment out the app.run line and uncomment the following:
-    # aura()
+    demo.launch()

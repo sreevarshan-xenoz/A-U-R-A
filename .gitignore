@@ -1,5 +1,35 @@
-.env
-node_modules/
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
+# Environment variables
+.env
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Model files (if stored locally)
+*.pt
+*.pth
+*.bin
+offload_folder/
+
+# Logs
+*.log
+
+node_modules/
 .DS_Store
