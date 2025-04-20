@@ -13,20 +13,25 @@ function Chat() {
   const [currentResponse, setCurrentResponse] = useState('');
   const typingSpeed = 15; // ms per character
 
-  // Your Hugging Face Space URL - Updated to correct URL
+  // Your Hugging Face Space URL
   const HF_SPACE_URL = "https://naxwinn-aura.hf.space";
   
   // Check if the Hugging Face Space is available
   useEffect(() => {
     const checkConnection = async () => {
       try {
-        // Test connection to the Hugging Face Space
-        const response = await fetch(`${HF_SPACE_URL}/run/heartbeat`);
-        const isAvailable = response.status === 200;
+        console.log("Checking connection to Hugging Face Space...");
+        // Try to fetch the health endpoint
+        const response = await fetch(`${HF_SPACE_URL}/health`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const isAvailable = response.ok;
         setIsConnected(isAvailable);
         console.log('Hugging Face Space status:', isAvailable ? 'connected' : 'disconnected');
       } catch (error) {
-        console.error('Hugging Face Space connection error:', error);
+        console.error('Error connecting to Hugging Face Space:', error);
         setIsConnected(false);
       }
     };
@@ -85,23 +90,42 @@ function Chat() {
           setIsLoading(false);
         }, 500);
       } else {
-        // Connect to the Hugging Face API using the correct endpoint
-        const response = await fetch(`${HF_SPACE_URL}/api/chat`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ 
-            message: message // Updated format for the /chat endpoint
-          }),
-        });
-
-        const data = await response.json();
-        // The response is directly in data, not data.data
-        const responseText = data || "I'm having trouble understanding that right now.";
+        // Call the Hugging Face Space with the correct API format
+        console.log("Sending message to Hugging Face Space:", message);
         
-        // Instead of immediately adding to responses, simulate typing
-        simulateTyping(responseText);
+        try {
+          // Use the standardized Gradio API format
+          const response = await fetch(`${HF_SPACE_URL}/run/predict`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              data: [message, []], // [message, history] format
+              fn_index: 0
+            })
+          });
+          
+          if (response.ok) {
+            const result = await response.json();
+            console.log("API response:", result);
+            
+            let responseText = "I'm having trouble understanding that right now.";
+            
+            // Standard format for Gradio responses is result.data[0]
+            if (result && result.data && Array.isArray(result.data) && result.data.length > 0) {
+              responseText = result.data[0];
+            }
+            
+            simulateTyping(responseText);
+          } else {
+            console.error("API returned error:", response.status, response.statusText);
+            throw new Error("API returned error: " + response.status);
+          }
+        } catch (innerError) {
+          console.error("API call failed:", innerError);
+          const errorMsg = "Sorry, I encountered an error processing your request.";
+          simulateTyping(errorMsg);
+        }
+        
         setIsLoading(false);
       }
     } catch (error) {
