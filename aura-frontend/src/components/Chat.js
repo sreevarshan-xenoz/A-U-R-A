@@ -14,33 +14,17 @@ function Chat() {
   const typingSpeed = 15; // ms per character
   const [chatId, setChatId] = useState(null);
 
-  // Backend API URL (our proxy server)
-  const API_URL = "http://localhost:3001/api";
+  // Local proxy server URL
+  const API_URL = "http://localhost:3001";
   
   // Initialize the connection and create a new chat session
   useEffect(() => {
     const initializeClient = async () => {
       try {
-        console.log("Checking backend server connection...");
+        console.log("Connecting to API server...");
         
-        // First, check if the backend server is running
-        try {
-          const testResponse = await fetch(`${API_URL}/test`);
-          if (testResponse.ok) {
-            const testResult = await testResponse.json();
-            console.log('Backend server status:', testResult);
-          } else {
-            throw new Error(`Server test failed with status: ${testResponse.status}`);
-          }
-        } catch (testError) {
-          console.error('Backend server test failed:', testError);
-          console.warn('Make sure to run the backend server with "npm run server" in another terminal');
-          setIsConnected(false);
-          return;
-        }
-        
-        // Then try to create a chat session
-        const response = await fetch(`${API_URL}/create_chat`, {
+        // Check connection by sending a request to create a new chat
+        const response = await fetch(`${API_URL}/api/create_chat`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -51,7 +35,7 @@ function Chat() {
         if (response.ok) {
           const result = await response.json();
           setIsConnected(true);
-          console.log('Connected to backend server successfully');
+          console.log('Connected to API server successfully');
           
           if (result.data) {
             setChatId(result.data);
@@ -61,7 +45,7 @@ function Chat() {
           throw new Error(`Connection failed with status: ${response.status}`);
         }
       } catch (error) {
-        console.error('Error connecting to backend server:', error);
+        console.error('Error connecting to API server:', error);
         setIsConnected(false);
       }
     };
@@ -116,11 +100,11 @@ function Chat() {
           setIsLoading(false);
         }, 500);
       } else {
-        console.log("Sending message to backend server:", message);
+        console.log("Sending message to API server:", message);
         
         try {
           // Use the submit endpoint to send the message
-          const response = await fetch(`${API_URL}/submit`, {
+          const response = await fetch(`${API_URL}/api/submit`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -157,7 +141,7 @@ function Chat() {
           // Try to recreate the chat if it might have expired
           try {
             console.log("Attempting to create a new chat session...");
-            const newChatResponse = await fetch(`${API_URL}/create_chat`, {
+            const newChatResponse = await fetch(`${API_URL}/api/create_chat`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
@@ -172,7 +156,7 @@ function Chat() {
                 console.log('Created new chat with ID:', newChatResult.data);
                 
                 // Try sending the message again with the new chat ID
-                const retryResponse = await fetch(`${API_URL}/submit`, {
+                const retryResponse = await fetch(`${API_URL}/api/submit`, {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/json',
@@ -211,7 +195,7 @@ function Chat() {
         }
       }
     } catch (error) {
-      console.error('Error communicating with backend server:', error);
+      console.error('Error communicating with API server:', error);
       const errorMsg = "Sorry, I encountered an error processing your request.";
       simulateTyping(errorMsg);
     } finally {
@@ -227,7 +211,7 @@ function Chat() {
     setIsLoading(true);
     try {
       console.log("Regenerating last response...");
-      const response = await fetch(`${API_URL}/regenerate`, {
+      const response = await fetch(`${API_URL}/api/regenerate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -275,7 +259,7 @@ function Chat() {
     
     try {
       console.log("Clearing chat history...");
-      const response = await fetch(`${API_URL}/create_chat`, {
+      const response = await fetch(`${API_URL}/api/create_chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

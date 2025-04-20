@@ -1,70 +1,96 @@
-# Getting Started with Create React App
+# A-U-R-A Chat Application
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A chat interface for the Qwen 32B language model using Hugging Face's API.
 
-## Available Scripts
+## Setup Instructions
 
-In the project directory, you can run:
+### Prerequisites
+- Node.js (v14 or higher)
+- NPM (v7 or higher)
+- A Hugging Face API key (get one from [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens))
 
-### `npm start`
+### Installation
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+1. Clone the repository:
+```bash
+git clone <your-repo-url>
+cd aura-frontend
+```
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+2. Install dependencies:
+```bash
+npm install
+```
 
-### `npm test`
+3. Configure your Hugging Face API key:
+   - Open the `.env` file in the root directory
+   - Replace `hf_dummy_key_replace_with_your_actual_key` with your actual Hugging Face API key
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+### Running the Application
 
-### `npm run build`
+#### Development Mode (with hot reloading)
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+Run both the React frontend and the API proxy server:
+```bash
+npm run dev
+```
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+This will start:
+- React development server on http://localhost:3000
+- API proxy server on http://localhost:3001
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+#### Production Build
 
-### `npm run eject`
+1. Build the React application:
+```bash
+npm run build
+```
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+2. Start the server (which will serve both the API and the static files):
+```bash
+npm run server
+```
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+The application will be available at http://localhost:3001
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+## How It Works
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+The application consists of:
 
-## Learn More
+1. **Frontend**: A React application with a chat interface.
+2. **Proxy Server**: A Node.js/Express server that:
+   - Serves as an intermediary between the frontend and Hugging Face API
+   - Manages chat sessions
+   - Handles API key security (keeping it on the server, not exposed to client)
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+## API Endpoints
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+The proxy server provides these endpoints:
 
-### Code Splitting
+- `POST /api/create_chat`: Create a new chat session
+- `POST /api/submit`: Send a message to the chat
+- `POST /api/regenerate`: Regenerate the last AI response
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+## Customization
 
-### Analyzing the Bundle Size
+To customize the model parameters, edit the `server.js` file:
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+```javascript
+// Change model parameters in the textGeneration call
+const response = await hf.textGeneration({
+  model: 'Qwen/QwQ-32B',  // Change to any Hugging Face model
+  inputs: history.map(msg => `${msg.role}: ${msg.content}`).join('\n') + '\nassistant:',
+  parameters: {
+    max_new_tokens: 500,   // Adjust token limit
+    temperature: 0.7,      // Adjust randomness (0.0-1.0)
+    top_p: 0.9,            // Adjust diversity
+    return_full_text: false
+  }
+});
+```
 
-### Making a Progressive Web App
+## Security Notes
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+- Never expose your Hugging Face API key in client-side code
+- In production, use proper environment variable management
+- Consider adding rate limiting to prevent abuse

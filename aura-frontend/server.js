@@ -1,224 +1,191 @@
+// Load environment variables
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const { HfInference } = require('@huggingface/inference');
 const path = require('path');
-require('dotenv').config();
 
+// Initialize Express app
 const app = express();
-const port = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'build')));
 
-// Initialize Hugging Face inference with API key
-// Note: Replace 'YOUR_API_KEY_HERE' with your actual Hugging Face API key
-// or set it as an environment variable in a .env file
-const HF_API_KEY = process.env.HF_API_KEY || 'YOUR_API_KEY_HERE';
-console.log(`Using API key: ${HF_API_KEY.substring(0, 4)}...${HF_API_KEY.substring(HF_API_KEY.length - 4)}`);
+// Initialize Hugging Face client 
+console.log("Initializing Hugging Face client...");
+const HF_API_KEY = process.env.HF_API_KEY || "hf_dummy_key_for_testing";
+
+if (HF_API_KEY === "hf_dummy_key_for_testing" || !HF_API_KEY) {
+  console.warn("\nWARNING: Using dummy API key. The application will not work properly.");
+  console.warn("Please set a valid API key in the .env file.\n");
+}
 
 const hf = new HfInference(HF_API_KEY);
 
-// Based on the URL in your screenshot, use the exact model name from the Hugging Face Space
-const MODEL_ID = 'Qwen/QwQ-32B-Demo';
-console.log(`Using model: ${MODEL_ID}`);
-
-// Add a test endpoint to verify the backend is running
-app.get('/api/test', (req, res) => {
-  res.json({ status: 'ok', message: 'Backend server is running' });
-});
-
-// Store chat sessions
+// Chat conversation history store (in-memory for simplicity)
+// In production, use a database
 const chatSessions = new Map();
 
 // Create a new chat session
 app.post('/api/create_chat', (req, res) => {
   try {
-    const sessionId = 'session_' + Math.random().toString(36).substring(2, 15);
-    chatSessions.set(sessionId, {
-      messages: []
-    });
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+    chatSessions.set(sessionId, []);
     console.log(`Created new chat session: ${sessionId}`);
     res.json({ data: sessionId });
   } catch (error) {
     console.error('Error creating chat session:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Failed to create chat session' });
   }
 });
 
-// Submit a message to the chat
+// Submit a message to chat
 app.post('/api/submit', async (req, res) => {
   try {
-    console.log('Received submit request:', req.body);
-    const [chatId, message, stream, temperature, maxTokens, topP, topK] = req.body.data;
+    const { data } = req.body;
+    
+    if (!data || !Array.isArray(data) || data.length < 2) {
+      return res.status(400).json({ error: 'Invalid request data format' });
+    }
+    
+    const [chatId, message] = data;
     
     if (!chatSessions.has(chatId)) {
       return res.status(404).json({ error: 'Chat session not found' });
     }
     
-    const session = chatSessions.get(chatId);
+    // Get chat history
+    const history = chatSessions.get(chatId);
     
-    // Add user message to the session
-    session.messages.push({ role: 'user', content: message });
+    // Add user message to history
+    history.push({ role: 'user', content: message });
     
-    // Format messages for the Hugging Face API
-    const formattedMessages = session.messages.map(msg => ({
-      role: msg.role,
-      content: msg.content
-    }));
-    
-    console.log(`Sending message to Hugging Face: ${message}`);
-    console.log('Formatted messages:', JSON.stringify(formattedMessages));
+    console.log(`Processing message for chat ${chatId}: "${message}"`);
     
     try {
-      // Call Hugging Face API using text-generation
+      // Call Hugging Face API for text generation
       const response = await hf.textGeneration({
-        model: MODEL_ID,
-        inputs: formattedMessages.map(m => `${m.role}: ${m.content}`).join('\n'),
+        model: 'Qwen/QwQ-32B',  // Specify the exact model
+        inputs: history.map(msg => `${msg.role}: ${msg.content}`).join('\n') + '\nassistant:',
         parameters: {
-          max_new_tokens: maxTokens || 1024,
-          temperature: temperature || 0.7,
-          top_p: topP || 0.9,
-          top_k: topK || 50,
+          max_new_tokens: 500,
+          temperature: 0.7,
+          top_p: 0.9,
           return_full_text: false
         }
       });
       
-      console.log('Raw API response:', response);
-      
+      // Extract AI response
       const aiResponse = response.generated_text.trim();
-      console.log(`Received response: ${aiResponse}`);
+      console.log(`Generated response: "${aiResponse.substring(0, 50)}${aiResponse.length > 50 ? '...' : ''}"`);
       
-      // Add AI response to the session
-      session.messages.push({ role: 'assistant', content: aiResponse });
+      // Add AI response to history
+      history.push({ role: 'assistant', content: aiResponse });
       
+      // Update chat history
+      chatSessions.set(chatId, history);
+      
+      // Send response to client
       res.json({ data: { response: aiResponse } });
-    } catch (apiError) {
-      console.error('Error calling Hugging Face API:', apiError);
+    } catch (error) {
+      console.error('Error calling Hugging Face API:', error);
       
-      // Try using the chat completion endpoint instead
-      try {
-        console.log('Trying chat completion endpoint instead...');
-        const chatResponse = await hf.chatCompletion({
-          model: MODEL_ID,
-          messages: formattedMessages,
-          temperature: temperature || 0.7,
-          max_tokens: maxTokens || 1024,
-          top_p: topP || 0.9,
-          top_k: topK || 50
+      // Check if it's an API key issue
+      if (error.message && error.message.includes('Authorization')) {
+        return res.status(401).json({ 
+          error: 'Invalid API key or authorization issue with Hugging Face API',
+          details: error.message 
         });
-        
-        console.log('Chat completion response:', chatResponse);
-        
-        const aiResponse = chatResponse.generated_text || chatResponse.choices[0]?.message?.content || 'Sorry, I couldn\'t generate a response.';
-        console.log(`Received chat response: ${aiResponse}`);
-        
-        // Add AI response to the session
-        session.messages.push({ role: 'assistant', content: aiResponse });
-        
-        res.json({ data: { response: aiResponse } });
-      } catch (chatError) {
-        console.error('Error calling chat completion API:', chatError);
-        throw apiError; // Re-throw the original error
       }
+      
+      res.status(500).json({ 
+        error: error.message || 'Failed to generate response',
+        suggestion: 'Check your API key in the .env file'
+      });
     }
   } catch (error) {
-    console.error('Error with chat submission:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Error in submit endpoint:', error);
+    res.status(500).json({ error: error.message || 'Failed to process request' });
   }
 });
 
-// Regenerate the last response
+// Regenerate last response
 app.post('/api/regenerate', async (req, res) => {
   try {
-    const [chatId, stream, temperature, maxTokens, topP, topK] = req.body.data;
+    const { data } = req.body;
+    
+    if (!data || !Array.isArray(data)) {
+      return res.status(400).json({ error: 'Invalid request data format' });
+    }
+    
+    const [chatId] = data;
     
     if (!chatSessions.has(chatId)) {
       return res.status(404).json({ error: 'Chat session not found' });
     }
     
-    const session = chatSessions.get(chatId);
+    // Get chat history
+    const history = chatSessions.get(chatId);
     
-    // Remove the last assistant message if it exists
-    if (session.messages.length > 0 && session.messages[session.messages.length - 1].role === 'assistant') {
-      session.messages.pop();
+    // Remove last AI response if it exists
+    if (history.length > 0 && history[history.length - 1].role === 'assistant') {
+      history.pop();
     }
     
-    // Make sure there's at least one user message
-    if (session.messages.length === 0 || session.messages[session.messages.length - 1].role !== 'user') {
-      return res.status(400).json({ error: 'No message to regenerate' });
-    }
+    console.log(`Regenerating response for chat ${chatId}`);
     
-    // Format messages for the Hugging Face API
-    const formattedMessages = session.messages.map(msg => ({
-      role: msg.role,
-      content: msg.content
-    }));
-    
-    console.log('Regenerating with messages:', JSON.stringify(formattedMessages));
-    
+    // Re-generate with remaining history
     try {
-      // Call Hugging Face API
       const response = await hf.textGeneration({
-        model: MODEL_ID,
-        inputs: formattedMessages.map(m => `${m.role}: ${m.content}`).join('\n'),
+        model: 'Qwen/QwQ-32B',
+        inputs: history.map(msg => `${msg.role}: ${msg.content}`).join('\n') + '\nassistant:',
         parameters: {
-          max_new_tokens: maxTokens || 1024,
-          temperature: temperature || 0.7,
-          top_p: topP || 0.9,
-          top_k: topK || 50,
+          max_new_tokens: 500,
+          temperature: 0.8, // Slightly higher temperature for variation
+          top_p: 0.9,
           return_full_text: false
         }
       });
       
+      // Extract AI response
       const aiResponse = response.generated_text.trim();
-      console.log(`Regenerated response: ${aiResponse}`);
+      console.log(`Regenerated response: "${aiResponse.substring(0, 50)}${aiResponse.length > 50 ? '...' : ''}"`);
       
-      // Add the new AI response to the session
-      session.messages.push({ role: 'assistant', content: aiResponse });
+      // Add new AI response to history
+      history.push({ role: 'assistant', content: aiResponse });
       
+      // Update chat history
+      chatSessions.set(chatId, history);
+      
+      // Send response to client
       res.json({ data: { response: aiResponse } });
-    } catch (apiError) {
-      console.error('Error calling Hugging Face API for regeneration:', apiError);
-      
-      // Try using the chat completion endpoint instead
-      try {
-        console.log('Trying chat completion endpoint for regeneration...');
-        const chatResponse = await hf.chatCompletion({
-          model: MODEL_ID,
-          messages: formattedMessages,
-          temperature: temperature || 0.7,
-          max_tokens: maxTokens || 1024,
-          top_p: topP || 0.9,
-          top_k: topK || 50
-        });
-        
-        const aiResponse = chatResponse.generated_text || chatResponse.choices[0]?.message?.content || 'Sorry, I couldn\'t regenerate a response.';
-        console.log(`Received regenerated chat response: ${aiResponse}`);
-        
-        // Add AI response to the session
-        session.messages.push({ role: 'assistant', content: aiResponse });
-        
-        res.json({ data: { response: aiResponse } });
-      } catch (chatError) {
-        console.error('Error calling chat completion API for regeneration:', chatError);
-        throw apiError; // Re-throw the original error
-      }
+    } catch (error) {
+      console.error('Error calling Hugging Face API for regeneration:', error);
+      res.status(500).json({ error: error.message || 'Failed to regenerate response' });
     }
   } catch (error) {
-    console.error('Error regenerating response:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Error in regenerate endpoint:', error);
+    res.status(500).json({ error: error.message || 'Failed to process request' });
   }
 });
 
-// Serve the React app for any other routes
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', message: 'Server is running' });
+});
+
+// Serve React app for any other routes
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'build', 'index.html'));
 });
 
 // Start the server
-app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
-  console.log(`Test the server: http://localhost:${port}/api/test`);
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+  console.log(`API proxy for Hugging Face is set up`);
+  console.log(`Visit http://localhost:${PORT} in your browser`);
 }); 
