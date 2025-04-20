@@ -13,21 +13,29 @@ function Chat() {
   const [currentResponse, setCurrentResponse] = useState('');
   const typingSpeed = 15; // ms per character
 
-  // Check if the backend is available
+  // Your Hugging Face Space URL - REPLACE THIS with your actual space URL
+  const HF_SPACE_URL = "https://naxwinn-a-u-r-a.hf.space";
+  
+  // Check if the Hugging Face Space is available
   useEffect(() => {
     const checkConnection = async () => {
       try {
-        const response = await fetch('http://localhost:5000/api/health');
-        const data = await response.json();
-        setIsConnected(data.status === 'ok');
-        console.log('Backend status:', data);
+        // Test connection to the Hugging Face Space
+        const response = await fetch(`${HF_SPACE_URL}/run/heartbeat`);
+        const isAvailable = response.status === 200;
+        setIsConnected(isAvailable);
+        console.log('Hugging Face Space status:', isAvailable ? 'connected' : 'disconnected');
       } catch (error) {
-        console.error('Backend connection error:', error);
+        console.error('Hugging Face Space connection error:', error);
         setIsConnected(false);
       }
     };
     
     checkConnection();
+    // Check connection status periodically
+    const intervalId = setInterval(checkConnection, 30000); // Check every 30 seconds
+    
+    return () => clearInterval(intervalId);
   }, []);
 
   // Auto-scroll to the bottom of messages
@@ -70,31 +78,37 @@ function Chat() {
 
     try {
       if (!isConnected) {
-        // Fallback if backend is not connected
+        // Fallback if Space is not connected
         setTimeout(() => {
-          const response = "Sorry, I'm currently disconnected from my brain. Please check the backend server.";
+          const response = "Sorry, I'm currently disconnected from my brain. Please check if the Hugging Face Space is running.";
           simulateTyping(response);
           setIsLoading(false);
         }, 500);
       } else {
-        // Connect to the Flask backend
-        const response = await fetch('http://localhost:5000/api/chat', {
+        // Connect to the Hugging Face Gradio API
+        const response = await fetch(`${HF_SPACE_URL}/api/predict`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ message: message }),
+          body: JSON.stringify({ 
+            data: [
+              message, // The message
+              [] // Empty history array - Gradio ChatInterface format
+            ] 
+          }),
         });
 
         const data = await response.json();
-        const responseText = data.response || "I'm having trouble understanding that right now.";
+        // Gradio returns data.data which contains the response in this format
+        const responseText = data.data || "I'm having trouble understanding that right now.";
         
         // Instead of immediately adding to responses, simulate typing
         simulateTyping(responseText);
         setIsLoading(false);
       }
     } catch (error) {
-      console.error('Error communicating with backend:', error);
+      console.error('Error communicating with Hugging Face Space:', error);
       const errorMsg = "Sorry, I encountered an error processing your request.";
       simulateTyping(errorMsg);
       setIsLoading(false);

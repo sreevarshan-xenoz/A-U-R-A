@@ -2,6 +2,7 @@ import speech_recognition as sr
 import datetime
 import wikipedia
 import pyjokes
+import webbrowser
 import os
 import requests
 from dotenv import load_dotenv
@@ -244,9 +245,27 @@ def handle_command(command):
 
         elif 'news' in command:
             return get_news()
+            
+        elif 'open' in command:
+            # Extract website name from command
+            sites = {
+                'youtube': 'https://youtube.com',
+                'google': 'https://google.com',
+                'gmail': 'https://mail.google.com',
+                'chatgpt': 'https://chat.openai.com',
+                'cults': 'https://cults3d.com',
+                'kaggle': 'https://kaggle.com',
+                'hianime': 'https://hianime.tv'
+            }
+            
+            for site, url in sites.items():
+                if site in command:
+                    # In web interface, we can suggest the link but not open it directly
+                    return f"Here's the link to {site}: {url}"
+            return "Website not in my database. Try being more specific."
 
         elif 'exit' in command or 'goodbye' in command:
-            return "Goodbye!"
+            return "Goodbye! Feel free to come back anytime."
 
         else:
             return generate_response(command)
@@ -259,18 +278,33 @@ def handle_command(command):
 def respond(message, history):
     return handle_command(message)
 
-# Create Gradio interface with a simpler theme
-initial_greeting = f"{get_greeting()}! I'm AURA, an AI assistant powered by TinyLlama. How can I help you today?"
+# Create a custom theme
+theme = gr.themes.Default().set(
+    body_background_fill="#212121",
+    body_background_fill_dark="#212121",
+    block_background_fill="#2E2E2E",
+    block_background_fill_dark="#2E2E2E",
+    input_background_fill="#383838",
+    input_background_fill_dark="#383838",
+    button_primary_background_fill="linear-gradient(to right, #00c6ff, #0072ff)",
+    button_primary_background_fill_hover="linear-gradient(to right, #00d2ff, #0080ff)"
+)
+
+# Create Gradio interface with our custom theme
+initial_greeting = f"{get_greeting()}! I'm AURA, your personal assistant. How can I help you today?"
 
 demo = gr.ChatInterface(
     fn=respond,
     title="A-U-R-A: AI Virtual Assistant",
-    description="Powered by TinyLlama with QLora fine-tuning",
-    theme="default",  # Simpler theme
+    description="I can assist with time, weather, news, jokes, and general questions. Try asking me something!",
+    theme=theme,
     examples=[
         "What time is it?",
         "Tell me a joke",
-        "Weather in London"
+        "Weather in London",
+        "Who is Albert Einstein?",
+        "Give me the latest news",
+        "Open YouTube"
     ],
     cache_examples=False,  # Disable caching to save memory
     analytics_enabled=False,
@@ -279,7 +313,7 @@ demo = gr.ChatInterface(
 # Launch the app with smaller queue size for faster startup
 if __name__ == "__main__":
     demo.launch(
-        share=False,  # Don't create a public share link
-        debug=True,   # Enable debug info in logs
-        max_threads=4  # Limit threads to avoid resource exhaustion
+        share=True,   # Create a public share link for testing
+        debug=False,  # Disable debug info in production
+        max_threads=4 # Limit threads to avoid resource exhaustion
     )
