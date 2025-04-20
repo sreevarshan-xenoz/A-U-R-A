@@ -95,26 +95,33 @@ function Chat() {
           setIsLoading(false);
         }, 500);
       } else {
-        // Use the respond_async endpoint from the new Space
+        // Use the standard predict endpoint with correct format for this Space
         console.log("Sending message to Hugging Face Space:", message);
         
         try {
-          const response = await fetch(`${HF_SPACE_URL}/run/respond_async`, {
+          // First set the model to JARVIS
+          await fetch(`${HF_SPACE_URL}/run/change_model`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Accept': 'application/json'
             },
             body: JSON.stringify({
-              data: [
-                {
-                  text: message,
-                  files: [] // No files being sent
-                }
-              ],
-              fn_index: 0
-            }),
-            mode: 'cors'
+              data: ["JARVIS: 2.1.2"]
+            })
+          });
+          
+          // Now send the actual message
+          const response = await fetch(`${HF_SPACE_URL}/run/api`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              data: [{
+                "text": message,
+                "files": []
+              }]
+            })
           });
           
           if (response.ok) {
@@ -123,16 +130,18 @@ function Chat() {
             
             let responseText = "I'm having trouble understanding that right now.";
             
-            // Handle the response format from this specific API
-            if (result && result.data && Array.isArray(result.data) && result.data.length > 0) {
-              // The response is in the first element of data array
-              const chatbotData = result.data[0];
+            // Extract response from the chat history array
+            if (result.data && Array.isArray(result.data) && result.data.length > 0) {
+              const chatHistory = result.data[0];
+              console.log("Chat history:", chatHistory);
               
-              // Extract the last bot message from the chatbot data
-              if (Array.isArray(chatbotData) && chatbotData.length > 0) {
-                const lastMessage = chatbotData[chatbotData.length - 1];
-                if (lastMessage && lastMessage.length > 1) {
-                  responseText = lastMessage[1]; // Bot messages are at index 1
+              if (Array.isArray(chatHistory) && chatHistory.length > 0) {
+                // Get the last message (which should be the bot's response)
+                const lastMessage = chatHistory[chatHistory.length - 1];
+                console.log("Last message:", lastMessage);
+                
+                if (Array.isArray(lastMessage) && lastMessage.length > 1) {
+                  responseText = lastMessage[1]; // Bot response is at index 1
                 }
               }
             }
@@ -140,48 +149,45 @@ function Chat() {
             console.log("Final response text:", responseText);
             simulateTyping(responseText);
           } else {
-            // Try fallback to /api endpoint if respond_async fails
-            console.log("respond_async failed, trying /api endpoint...");
-            const apiResponse = await fetch(`${HF_SPACE_URL}/run/api`, {
+            console.error("API error:", response.status, response.statusText);
+            
+            // Try the alternative endpoint
+            console.log("Trying respond_async endpoint...");
+            const altResponse = await fetch(`${HF_SPACE_URL}/run/respond_async`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'Accept': 'application/json'
               },
               body: JSON.stringify({
-                data: [
-                  {
-                    text: message,
-                    files: []
-                  }
-                ],
-                fn_index: 0
-              }),
-              mode: 'cors'
+                data: [{
+                  "text": message,
+                  "files": []
+                }]
+              })
             });
             
-            if (apiResponse.ok) {
-              const apiResult = await apiResponse.json();
-              console.log("API endpoint response:", apiResult);
+            if (altResponse.ok) {
+              const altResult = await altResponse.json();
+              console.log("Alternative endpoint response:", altResult);
               
-              let apiResponseText = "I'm having trouble understanding that right now.";
+              let altResponseText = "I'm having trouble understanding that right now.";
               
-              // Similar extraction logic for the API endpoint
-              if (apiResult && apiResult.data && Array.isArray(apiResult.data) && apiResult.data.length > 0) {
-                const chatbotData = apiResult.data[0];
+              if (altResult.data && Array.isArray(altResult.data) && altResult.data.length > 0) {
+                const chatHistory = altResult.data[0];
                 
-                if (Array.isArray(chatbotData) && chatbotData.length > 0) {
-                  const lastMessage = chatbotData[chatbotData.length - 1];
-                  if (lastMessage && lastMessage.length > 1) {
-                    apiResponseText = lastMessage[1];
+                if (Array.isArray(chatHistory) && chatHistory.length > 0) {
+                  const lastMessage = chatHistory[chatHistory.length - 1];
+                  
+                  if (Array.isArray(lastMessage) && lastMessage.length > 1) {
+                    altResponseText = lastMessage[1];
                   }
                 }
               }
               
-              console.log("API endpoint response text:", apiResponseText);
-              simulateTyping(apiResponseText);
+              console.log("Alternative response text:", altResponseText);
+              simulateTyping(altResponseText);
             } else {
-              throw new Error(`API returned error: ${apiResponse.status}`);
+              throw new Error(`All API endpoints failed`);
             }
           }
         } catch (innerError) {
